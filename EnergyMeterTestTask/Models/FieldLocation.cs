@@ -1,8 +1,10 @@
-﻿namespace EnergyMeterTestTask.Models
+﻿using System.Security.Cryptography;
+
+namespace EnergyMeterTestTask.Models
 {
     public class FieldLocation
     {
-        public Point Center { get; set; }
-        public List<Point> Polygon { get; set; }
+        public GeoPoint Center { get; set; }
+        public List<GeoPoint> Polygon { get; set; }
     }
 }

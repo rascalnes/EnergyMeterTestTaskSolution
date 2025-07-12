@@ -7,7 +7,7 @@ namespace EnergyMeterTestTask.Services
         IEnumerable<Field> GetAllFields();
         Field GetFieldById(string id);
         double? GetFieldSize(string id);
-        double? CalculateDistanceToCenter(string fieldId, Point point);
-        (string id, string name)? CheckPointInFields(Point point);
+        double? CalculateDistanceToCenter(string fieldId, GeoPoint point);
+        (string id, string name)? CheckPointInFields(GeoPoint point);
     }
 }

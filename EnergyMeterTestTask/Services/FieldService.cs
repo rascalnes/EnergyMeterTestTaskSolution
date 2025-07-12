@@ -8,6 +8,8 @@ using ProjNet.CoordinateSystems.Transformations;
 using NetTopologySuite.IO.KML;
 using GeoAPI.CoordinateSystems.Transformations;
 using ProjNet;
+using GeoAPI.Geometries;
+using GeographicLib;
 
 namespace EnergyMeterTestTask.Services
 {
@@ -15,10 +17,42 @@ namespace EnergyMeterTestTask.Services
     {
         private readonly List<Field> _fields;
         private readonly GeometryFactory _geometryFactory;
+        private readonly ICoordinateTransformation _wgs84ToMetric;
+        private readonly Geodesic _geodesic;
 
         public FieldService()
         {
             _geometryFactory = new GeometryFactory(new PrecisionModel(), 4326);
+            _geodesic = Geodesic.WGS84;
+
+            // Setup coordinate transformation (WGS84 to UTM for area calculations)
+            var coordinateSystemFactory = new CoordinateSystemFactory();
+            var wgs84 = GeographicCoordinateSystem.WGS84;
+
+            // For Moscow region we'll use UTM Zone 37N
+            var utm37n = coordinateSystemFactory.CreateFromWkt(
+                "PROJCS[\"WGS 84 / UTM zone 37N\"," +
+                "GEOGCS[\"WGS 84\"," +
+                "DATUM[\"WGS_1984\"," +
+                "SPHEROID[\"WGS 84\",6378137,298.257223563,AUTHORITY[\"EPSG\",\"7030\"]]," +
+                "AUTHORITY[\"EPSG\",\"6326\"]]," +
+                "PRIMEM[\"Greenwich\",0,AUTHORITY[\"EPSG\",\"8901\"]]," +
+                "UNIT[\"degree\",0.01745329251994328,AUTHORITY[\"EPSG\",\"9122\"]]," +
+                "AUTHORITY[\"EPSG\",\"4326\"]]," +
+                "UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]]," +
+                "PROJECTION[\"Transverse_Mercator\"]," +
+                "PARAMETER[\"latitude_of_origin\",0]," +
+                "PARAMETER[\"central_meridian\",39]," +
+                "PARAMETER[\"scale_factor\",0.9996]," +
+                "PARAMETER[\"false_easting\",500000]," +
+                "PARAMETER[\"false_northing\",0]," +
+                "AUTHORITY[\"EPSG\",\"32637\"]," +
+                "AXIS[\"Easting\",EAST]," +
+                "AXIS[\"Northing\",NORTH]]");
+
+            var ctFactory = new CoordinateTransformationFactory();
+            _wgs84ToMetric = ctFactory.CreateFromCoordinateSystems(wgs84, utm37n);
+
             _fields = LoadFieldsFromKml("Data/fields.kml", "Data/centroids.kml");
         }
 
@@ -28,27 +62,28 @@ namespace EnergyMeterTestTask.Services
 
         public double? GetFieldSize(string id) => GetFieldById(id)?.Size;
 
-        public double? CalculateDistanceToCenter(string fieldId, Models.Point point)
+        public double? CalculateDistanceToCenter(string fieldId, GeoPoint point)
         {
             var field = GetFieldById(fieldId);
             if (field == null) return null;
 
-            var center = _geometryFactory.CreatePoint(new Coordinate(field.Locations.Center.Lng, field.Locations.Center.Lat));
-            var target = _geometryFactory.CreatePoint(new Coordinate(point.Lng, point.Lat));
-
-            // Convert to metric system (using Haversine formula for WGS84)
-            return center.Distance(target) * 111320; // Approximate conversion to meters
+            // Using GeographicLib for precise geodesic calculations
+            return _geodesic.Inverse(
+                field.Locations.Center.Latitude, field.Locations.Center.Longitude,
+                point.Latitude, point.Longitude).Distance; // in meters
         }
 
-        public (string id, string name)? CheckPointInFields(Models.Point point)
+        public (string id, string name)? CheckPointInFields(GeoPoint point)
         {
-            var target = _geometryFactory.CreatePoint(new Coordinate(point.Lng, point.Lat));
+            var target = _geometryFactory.CreatePoint(
+                new NetTopologySuite.Geometries.Coordinate(point.Longitude, point.Latitude));
 
             foreach (var field in _fields)
             {
                 var polygonCoordinates = field.Locations.Polygon
-                    .Select(p => new Coordinate(p.Lng, p.Lat))
-                    .Append(new Coordinate(field.Locations.Polygon[0].Lng, field.Locations.Polygon[0].Lat)) // Close the ring
+                    .Select(p => new NetTopologySuite.Geometries.Coordinate(p.Longitude, p.Latitude))
+                    .Append(new NetTopologySuite.Geometries.Coordinate(field.Locations.Polygon[0].Longitude,
+                                         field.Locations.Polygon[0].Latitude))
                     .ToArray();
 
                 var polygon = _geometryFactory.CreatePolygon(polygonCoordinates);
@@ -65,74 +100,90 @@ namespace EnergyMeterTestTask.Services
         private List<Field> LoadFieldsFromKml(string fieldsPath, string centroidsPath)
         {
             var fields = new List<Field>();
-
-            // Используем инвариантную культуру для парсинга чисел
             var culture = CultureInfo.InvariantCulture;
 
-            // Load centroids first
+            // Load centroids
+            var centroidDict = new Dictionary<string, GeoPoint>();
             var centroidsDoc = XDocument.Load(centroidsPath);
-            var centroidPlacemarks = centroidsDoc.Descendants("{http://www.opengis.net/kml/2.2}Placemark");
 
-            var centroidDict = new Dictionary<string, Models.Point>();
-            foreach (var placemark in centroidPlacemarks)
+            foreach (var placemark in centroidsDoc.Descendants("{http://www.opengis.net/kml/2.2}Placemark"))
             {
                 var id = placemark.Element("{http://www.opengis.net/kml/2.2}name")?.Value;
-                var coordinates = placemark.Descendants("{http://www.opengis.net/kml/2.2}coordinates").First().Value;
-                var coords = coordinates.Trim().Split(',');
+                var coords = placemark.Descendants("{http://www.opengis.net/kml/2.2}coordinates")
+                                    .First().Value.Trim().Split(',');
 
-                if (id != null && coords.Length >= 2)
+                if (id != null && coords.Length >= 2 &&
+                    double.TryParse(coords[1], NumberStyles.Any, culture, out var lat) &&
+                    double.TryParse(coords[0], NumberStyles.Any, culture, out var lng))
                 {
-                    centroidDict[id] = new  Models.Point(
-                        double.Parse(coords[1], culture),
-                        double.Parse(coords[0], culture));
+                    centroidDict[id] = new GeoPoint(lat, lng);
                 }
             }
 
-            // Load fields polygons
+            // Load fields
             var fieldsDoc = XDocument.Load(fieldsPath);
-            var fieldPlacemarks = fieldsDoc.Descendants("{http://www.opengis.net/kml/2.2}Placemark");
 
-            foreach (var placemark in fieldPlacemarks)
+            foreach (var placemark in fieldsDoc.Descendants("{http://www.opengis.net/kml/2.2}Placemark"))
             {
                 var id = placemark.Element("{http://www.opengis.net/kml/2.2}name")?.Value;
                 var description = placemark.Element("{http://www.opengis.net/kml/2.2}description")?.Value;
-                var coordinates = placemark.Descendants("{http://www.opengis.net/kml/2.2}coordinates").First().Value;
 
-                if (id != null && centroidDict.TryGetValue(id, out var center))
+                if (id == null || !centroidDict.TryGetValue(id, out var center)) continue;
+
+                var coordsText = placemark.Descendants("{http://www.opengis.net/kml/2.2}coordinates")
+                                        .First().Value;
+
+                var polygonPoints = new List<GeoPoint>();
+                var coordPairs = coordsText.Split(new[] { ' ', '\n', '\r', '\t' },
+                                                StringSplitOptions.RemoveEmptyEntries);
+
+                foreach (var pair in coordPairs)
                 {
-                    var polygonPoints = coordinates.Trim()
-                        .Split(new[] { ' ', '\n', '\r', '\t' }, StringSplitOptions.RemoveEmptyEntries)
-                        .Select(coord => coord.Split(','))
-                        .Where(parts => parts.Length >= 2)
-                        .Select(parts => new Models.Point(
-                            double.Parse(parts[1], culture),
-                            double.Parse(parts[0], culture)))
-                        .ToList();
+                    var parts = pair.Split(',');
+                    if (parts.Length < 2) continue;
 
-                    // Calculate area
-                    var polygon = _geometryFactory.CreatePolygon(
-                        polygonPoints
-                            .Select(p => new Coordinate(p.Lng, p.Lat))
-                            .Append(new Coordinate(polygonPoints[0].Lng, polygonPoints[0].Lat))
-                            .ToArray());
-
-                    var area = polygon.Area * 111 * 111 * 100; // in hectares
-
-                    fields.Add(new Field
+                    if (double.TryParse(parts[1], NumberStyles.Any, culture, out var lat) &&
+                        double.TryParse(parts[0], NumberStyles.Any, culture, out var lng))
                     {
-                        Id = id,
-                        Name = description ?? $"Field {id}",
-                        Size = Math.Round(area, 2),
-                        Locations = new FieldLocation
-                        {
-                            Center = center,
-                            Polygon = polygonPoints
-                        }
-                    });
+                        polygonPoints.Add(new GeoPoint(lat, lng));
+                    }
                 }
+
+                if (polygonPoints.Count < 3) continue;
+
+                // Calculate area using projected coordinates
+                var area = CalculatePolygonArea(polygonPoints);
+
+                fields.Add(new Field
+                {
+                    Id = id,
+                    Name = description ?? $"Field {id}",
+                    Size = Math.Round(area / 10000, 2), // Convert to hectares
+                    Locations = new FieldLocation
+                    {
+                        Center = center,
+                        Polygon = polygonPoints
+                    }
+                });
             }
 
             return fields;
+        }
+
+        private double CalculatePolygonArea(List<GeoPoint> points)
+        {
+            // Transform coordinates to metric system
+            var metricCoords = points
+                .Select(p => _wgs84ToMetric.MathTransform.Transform(
+                    new[] { p.Longitude, p.Latitude }))
+                .Select(c => new NetTopologySuite.Geometries.Coordinate(c[0], c[1]))
+                .ToList();
+
+            // Close the ring
+            metricCoords.Add(metricCoords[0]);
+
+            var polygon = _geometryFactory.CreatePolygon(metricCoords.ToArray());
+            return polygon.Area; // in square meters
         }
     }
 }
