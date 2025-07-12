@@ -56,15 +56,18 @@ namespace EnergyMeterTestTask.Services
             _fields = LoadFieldsFromKml("Data/fields.kml", "Data/centroids.kml");
         }
 
-        public IEnumerable<Field> GetAllFields() => _fields;
+        public IEnumerable<Field> GetAllFieldsAsync() => _fields;
 
-        public Field GetFieldById(string id) => _fields.FirstOrDefault(f => f.Id == id);
+        public async Task<Field> GetFieldByIdAsync(string id) => _fields.FirstOrDefault(f => f.Id == id);
 
-        public double? GetFieldSize(string id) => GetFieldById(id)?.Size;
-
-        public double? CalculateDistanceToCenter(string fieldId, GeoPoint point)
+        public async Task<double?> GetFieldSizeAsync(string id)
         {
-            var field = GetFieldById(fieldId);
+            return (await GetFieldByIdAsync(id))?.Size;
+        }
+
+        public async Task<double?> CalculateDistanceToCenterAsync(string fieldId, GeoPoint point)
+        {
+            var field = await GetFieldByIdAsync(fieldId);
             if (field == null) return null;
 
             // Using GeographicLib for precise geodesic calculations
@@ -73,7 +76,7 @@ namespace EnergyMeterTestTask.Services
                 point.Latitude, point.Longitude).Distance; // in meters
         }
 
-        public (string id, string name)? CheckPointInFields(GeoPoint point)
+        public async Task<(string id, string name)?> CheckPointInFieldsAsync(GeoPoint point)
         {
             var target = _geometryFactory.CreatePoint(
                 new NetTopologySuite.Geometries.Coordinate(point.Longitude, point.Latitude));

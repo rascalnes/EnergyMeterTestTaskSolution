@@ -19,7 +19,9 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title = "Fields API",
         Version = "v1",
-        Description = "API for working with agricultural fields and geospatial data"
+        Description = "API for working with agricultural fields and geospatial data",
+        License = new OpenApiLicense { Name = "Free License", Url = new Uri($"{builder.Configuration["ASPNETCORE_URLS"].Split(";")[1]}/swagger") },
+        Contact = new OpenApiContact { Name = "Evgeniy Nikonov", Email = "johnybravo89@mail.ru" }
     });
 
     // Include XML comments if available
