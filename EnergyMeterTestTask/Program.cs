@@ -20,7 +20,7 @@ builder.Services.AddSwaggerGen(c =>
         Title = "Fields API",
         Version = "v1",
         Description = "API for working with agricultural fields and geospatial data",
-        License = new OpenApiLicense { Name = "Free License", Url = new Uri($"{builder.Configuration["ASPNETCORE_URLS"].Split(";")[1]}/swagger") },
+        //License = new OpenApiLicense { Name = "Free License", Url = new Uri($"{builder.Configuration["ASPNETCORE_URLS"].Split(";")[1]}/swagger") },
         Contact = new OpenApiContact { Name = "Evgeniy Nikonov", Email = "johnybravo89@mail.ru" }
     });
 
@@ -33,11 +33,22 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
+app.UseStaticFiles();
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
-    app.UseSwaggerUI();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "EnergyMeterTestTask");
+        c.InjectStylesheet("/swagger-ui/SwaggerDark.css");
+    });
+    app.MapGet("/swagger-ui/SwaggerDark.css", async (CancellationToken cancellationToken) =>
+    {
+        var css = await File.ReadAllBytesAsync("SwaggerDark.css", cancellationToken);
+        return Results.File(css, "text/css");
+    }).ExcludeFromDescription();
 }
 
 app.UseHttpsRedirection();
