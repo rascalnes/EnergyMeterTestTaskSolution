@@ -34,11 +34,22 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
+app.UseStaticFiles();
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
-    app.UseSwaggerUI();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "EnergyMeterTestTask");
+        c.InjectStylesheet("/swagger-ui/SwaggerDark.css");
+    });
+    app.MapGet("/swagger-ui/SwaggerDark.css", async (CancellationToken cancellationToken) =>
+    {
+        var css = await File.ReadAllBytesAsync("SwaggerDark.css", cancellationToken);
+        return Results.File(css, "text/css");
+    }).ExcludeFromDescription();
 }
 
 app.UseHttpsRedirection();
