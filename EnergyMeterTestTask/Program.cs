@@ -1,6 +1,7 @@
 // Program.cs
 using EnergyMeterTestTask.Services;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.OpenApi.Models;
 using System.Reflection;
@@ -20,7 +21,7 @@ builder.Services.AddSwaggerGen(c =>
         Title = "Fields API",
         Version = "v1",
         Description = "API for working with agricultural fields and geospatial data",
-        License = new OpenApiLicense { Name = "Free License", Url = new Uri($"{builder.Configuration["ASPNETCORE_URLS"].Split(";")[1]}/swagger") },
+        //License = new OpenApiLicense { Name = "Free License", Url = new Uri($"{builder.Configuration["ASPNETCORE_URLS"].Split(";")[1]}/swagger") },
         Contact = new OpenApiContact { Name = "Evgeniy Nikonov", Email = "johnybravo89@mail.ru" }
     });
 
@@ -43,5 +44,12 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseAuthorization();
 app.MapControllers();
+
+// Exception handling
+app.UseExceptionHandler(a => a.Run(async context =>
+{
+    var exception = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+    await context.Response.WriteAsJsonAsync(new { error = exception?.Message });
+}));
 
 app.Run();
